@@ -1,6 +1,6 @@
 environment: prod
 base_url: https://the-internet.herokuapp.com
-api_base_url: https://reqres.in/api
+api_base_url: https://jsonplaceholder.typicode.com
 timeout: 30
 implicit_wait: 5
 default_user:

@@ -17,7 +17,7 @@ Fetch User Scenario    default    default
 
 *** Keywords ***
 Verify User Payload
-    [Arguments]    ${user_id}    ${expected_first_name}
+    [Arguments]    ${user_id}    ${expected_name}
     ${response}=    API.Send Request    GET    /users/${user_id}    expected_status=200
     ${body}=    Set Variable    ${response.json()}
-    Should Be Equal    ${body}[data][first_name]    ${expected_first_name}
+    Should Be Equal    ${body}[name]    ${expected_name}

@@ -37,9 +37,12 @@ class CustomListener:
     def end_suite(self, suite, result) -> None:  # noqa: ANN001
         if suite.parent is None:
             elapsed = time.time() - self._start_time
+            stats = getattr(result, "statistics", None)
+            passed = getattr(stats, "passed", "?") if stats is not None else "?"
+            failed = getattr(stats, "failed", "?") if stats is not None else "?"
             logger.console(
                 f"[CustomListener] Run complete in {elapsed:.1f}s | "
-                f"passed={result.statistics.total.passed} failed={result.statistics.total.failed}"
+                f"passed={passed} failed={failed}"
             )
 
     # --- test ----------------------------------------------------------
@@ -48,9 +51,9 @@ class CustomListener:
             return
         try:
             selenium = BuiltIn().get_library_instance("SeleniumLibrary")
-        except Exception:  # noqa: BLE001 - non-UI test
+        except Exception:  # noqa: BLE001 - SeleniumLibrary not loaded (API-only test)
             return
-        if not selenium.driver_cache.active_drivers:
+        if not self._has_active_driver(selenium):
             return
         filename = self.screenshots_dir / f"fail_{self._slug(test.name)}_{int(time.time())}.png"
         try:
@@ -59,6 +62,14 @@ class CustomListener:
             logger.console(f"[CustomListener] Saved failure screenshot: {filename}")
         except Exception as exc:  # noqa: BLE001
             logger.warn(f"[CustomListener] Screenshot capture failed: {exc}")
+
+    @staticmethod
+    def _has_active_driver(selenium) -> bool:  # noqa: ANN001
+        for attr in ("_drivers", "driver_cache"):
+            cache = getattr(selenium, attr, None)
+            if cache is not None and getattr(cache, "active_drivers", None):
+                return True
+        return False
 
     @staticmethod
     def _slug(name: str) -> str:

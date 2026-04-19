@@ -1,4 +1,4 @@
-*** Test Cases ***,${user_id},${expected_first_name}
-Fetch George,1,George
-Fetch Janet,2,Janet
-Fetch Emma,3,Emma
+*** Test Cases ***,${user_id},${expected_name}
+Fetch User 1,1,Leanne Graham
+Fetch User 2,2,Ervin Howell
+Fetch User 3,3,Clementine Bauch

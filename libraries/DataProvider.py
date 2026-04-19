@@ -44,15 +44,20 @@ class DataProvider:
         """Read an Excel sheet into a list of dicts keyed by the header row."""
         path = _resolve(filename)
         wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
-        ws = wb[sheet] if sheet else wb.active
-        rows = ws.iter_rows(values_only=True)
         try:
-            header = [str(c) if c is not None else "" for c in next(rows)]
-        except StopIteration:
-            return []
-        result: list[dict[str, str]] = []
-        for row in rows:
-            if row is None or all(cell is None for cell in row):
-                continue
-            result.append({header[i]: ("" if cell is None else str(cell)) for i, cell in enumerate(row)})
-        return result
+            ws = wb[sheet] if sheet else wb.active
+            rows = ws.iter_rows(values_only=True)
+            try:
+                header = [str(c) if c is not None else "" for c in next(rows)]
+            except StopIteration:
+                return []
+            result: list[dict[str, str]] = []
+            for row in rows:
+                if row is None or all(cell is None for cell in row):
+                    continue
+                result.append(
+                    {header[i]: ("" if cell is None else str(cell)) for i, cell in enumerate(row)}
+                )
+            return result
+        finally:
+            wb.close()

@@ -82,6 +82,8 @@ class BrowserFactory:
         parts: list[str] = []
         for arg in browser_cfg.get("options", []) or []:
             parts.append(f'add_argument("{arg}")')
-        for key, value in (browser_cfg.get("prefs") or {}).items():
-            parts.append(f'add_experimental_option("prefs", {{"{key}": {value!r}}})')
+        prefs = browser_cfg.get("prefs") or {}
+        if prefs:
+            prefs_inner = ", ".join(f'"{k}": {v!r}' for k, v in prefs.items())
+            parts.append(f"add_experimental_option(\"prefs\", {{{prefs_inner}}})")
         return "; ".join(parts)
