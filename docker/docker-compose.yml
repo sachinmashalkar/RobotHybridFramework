@@ -1,0 +1,50 @@
+version: "3.9"
+
+# Local Selenium Grid (hub + Chrome + Firefox nodes) plus the test runner.
+# Start with:   docker compose -f docker/docker-compose.yml up --build
+services:
+  selenium-hub:
+    image: selenium/hub:4.26
+    container_name: selenium-hub
+    ports:
+      - "4442:4442"
+      - "4443:4443"
+      - "4444:4444"
+
+  chrome:
+    image: selenium/node-chrome:4.26
+    shm_size: "2gb"
+    depends_on:
+      - selenium-hub
+    environment:
+      - SE_EVENT_BUS_HOST=selenium-hub
+      - SE_EVENT_BUS_PUBLISH_PORT=4442
+      - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
+      - SE_NODE_MAX_SESSIONS=4
+
+  firefox:
+    image: selenium/node-firefox:4.26
+    shm_size: "2gb"
+    depends_on:
+      - selenium-hub
+    environment:
+      - SE_EVENT_BUS_HOST=selenium-hub
+      - SE_EVENT_BUS_PUBLISH_PORT=4442
+      - SE_EVENT_BUS_SUBSCRIBE_PORT=4443
+      - SE_NODE_MAX_SESSIONS=4
+
+  runner:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    depends_on:
+      - selenium-hub
+      - chrome
+      - firefox
+    environment:
+      - BROWSER=chrome
+      - USE_GRID=true
+      - TEST_ENV=dev
+    volumes:
+      - ../results:/opt/framework/results
+    command: ["bash", "scripts/run_tests.sh", "--suite", "tests", "--browser", "chrome"]

@@ -1,0 +1,36 @@
+default: chrome
+grid_url: http://localhost:4444/wd/hub
+browsers:
+  chrome:
+    name: chrome
+    options:
+      - "--disable-gpu"
+      - "--no-sandbox"
+      - "--disable-dev-shm-usage"
+      - "--window-size=1920,1080"
+    prefs:
+      download.default_directory: "/tmp/downloads"
+      download.prompt_for_download: false
+  headlesschrome:
+    name: chrome
+    options:
+      - "--headless=new"
+      - "--disable-gpu"
+      - "--no-sandbox"
+      - "--disable-dev-shm-usage"
+      - "--window-size=1920,1080"
+  firefox:
+    name: firefox
+    options:
+      - "--width=1920"
+      - "--height=1080"
+  headlessfirefox:
+    name: firefox
+    options:
+      - "-headless"
+      - "--width=1920"
+      - "--height=1080"
+  edge:
+    name: edge
+    options:
+      - "--window-size=1920,1080"
