@@ -1,0 +1,21 @@
+[project]
+name = "robot-hybrid-framework"
+version = "1.0.0"
+description = "Advanced hybrid test automation framework built on Robot Framework + SeleniumLibrary"
+authors = [{ name = "Sachin Mashalkar", email = "sachinmashalkar0290@gmail.com" }]
+readme = "README.md"
+requires-python = ">=3.10"
+
+[tool.robotidy]
+line_length = 120
+spacecount = 4
+
+[tool.robocop]
+exclude = [
+  "missing-doc-test-case",
+  "missing-doc-keyword",
+  "missing-doc-resource-file",
+  "too-long-test-case",
+  "todo-in-comment",
+  "file-too-long",
+]

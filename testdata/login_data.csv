@@ -1,0 +1,4 @@
+*** Test Cases ***,${username},${password},${expected_flash}
+Valid Login,tomsmith,SuperSecretPassword!,You logged into a secure area!
+Wrong Password,tomsmith,WrongPassword,Your password is invalid!
+Unknown User,unknown,SuperSecretPassword!,Your username is invalid!

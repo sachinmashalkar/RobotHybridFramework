@@ -1,0 +1,36 @@
+# --- Core Robot Framework stack ---
+robotframework==7.1.1
+robotframework-seleniumlibrary==6.6.1
+robotframework-requests==0.9.7
+robotframework-jsonlibrary==0.5
+robotframework-databaselibrary==1.4.4
+
+# --- Drivers + browser management ---
+selenium==4.26.1
+webdriver-manager==4.0.2
+
+# --- Parallel execution ---
+robotframework-pabot==4.1.0
+
+# --- Reporting ---
+robotframework-metrics==3.7.0
+allure-robotframework==2.13.5
+
+# --- Data handling / data-driven tests ---
+robotframework-datadriver==1.11.2
+openpyxl==3.1.5
+pyyaml==6.0.2
+python-dotenv==1.0.1
+faker==30.8.2
+robotframework-faker==5.0.0
+
+# --- Resilience ---
+robotframework-retryfailed==0.2.0
+
+# --- HTTP (used by custom APIClient) ---
+requests==2.32.3
+
+# --- Quality / dev tooling ---
+robotframework-tidy==4.15.0
+robotframework-robocop==5.6.0
+pre-commit==4.0.1
