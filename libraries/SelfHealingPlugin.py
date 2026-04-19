@@ -376,7 +376,7 @@ class SelfHealingPlugin(LibraryComponent):
                 EC.visibility_of_element_located(by_val)
             )
         except TimeoutException:
-            element = self._heal_from_cache(locator)
+            element = self._heal_fallback(locator)
             if element is None or not element.is_displayed():
                 raise AssertionError(
                     error or f"Element '{locator}' not visible in {deadline}s"
@@ -395,7 +395,7 @@ class SelfHealingPlugin(LibraryComponent):
                 EC.element_to_be_clickable(by_val)
             )
         except TimeoutException:
-            element = self._heal_from_cache(locator)
+            element = self._heal_fallback(locator)
             if element is None or not element.is_enabled():
                 raise AssertionError(
                     error or f"Element '{locator}' not enabled in {deadline}s"
@@ -482,10 +482,7 @@ class SelfHealingPlugin(LibraryComponent):
                 return elements[0]
         except WebDriverException:
             pass
-        element = self._heal_from_cache(locator)
-        if element is not None:
-            return element
-        element = self._heal_via_llm(locator)
+        element = self._heal_fallback(locator)
         if element is not None:
             return element
         raise ElementNotFound(
@@ -493,6 +490,13 @@ class SelfHealingPlugin(LibraryComponent):
             f"(fingerprint scorer below threshold {self._threshold}; "
             f"LLM heal unavailable or failed)"
         )
+
+    def _heal_fallback(self, locator: str) -> WebElement | None:
+        """Try tier 2 (fingerprint) then tier 3 (LLM). Shared by all overrides."""
+        element = self._heal_from_cache(locator)
+        if element is not None:
+            return element
+        return self._heal_via_llm(locator)
 
     def _heal_from_cache(self, locator: str) -> WebElement | None:
         fp_dict = self._cache.get(locator)
