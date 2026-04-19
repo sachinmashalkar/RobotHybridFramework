@@ -6,6 +6,10 @@ authors = [{ name = "Sachin Mashalkar", email = "sachinmashalkar0290@gmail.com" 
 readme = "README.md"
 requires-python = ">=3.10"
 
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests/unit"]
+
 [tool.robotidy]
 line_length = 120
 spacecount = 4
