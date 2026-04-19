@@ -34,3 +34,4 @@ requests==2.32.3
 robotframework-tidy==4.15.0
 robotframework-robocop==5.6.0
 pre-commit==4.0.1
+pytest==8.3.3

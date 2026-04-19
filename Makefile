@@ -1,4 +1,4 @@
-.PHONY: help install dev-install dry-run test smoke ui api parallel grid docker-grid-up docker-grid-down clean lint format report hooks
+.PHONY: help install dev-install dry-run test smoke ui api parallel grid docker-grid-up docker-grid-down clean lint format report hooks test-unit
 
 PY ?= python3
 ROBOT_TAGS ?=
@@ -35,6 +35,9 @@ dry-run:
 
 test:
 	bash scripts/run_tests.sh
+
+test-unit:
+	pytest tests/unit -v
 
 smoke:
 	bash scripts/run_tests.sh --tags smoke

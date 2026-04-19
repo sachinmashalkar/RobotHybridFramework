@@ -10,6 +10,7 @@ Library             OperatingSystem
 Library             Process
 Library             String
 Library             SeleniumLibrary    timeout=20s    implicit_wait=2s
+...                     plugins=libraries.SelfHealingPlugin.SelfHealingPlugin
 Library             RequestsLibrary
 Library             JSONLibrary
 Library             DatabaseLibrary
