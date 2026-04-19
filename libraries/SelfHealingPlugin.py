@@ -408,12 +408,13 @@ class SelfHealingPlugin(LibraryComponent):
         out = Path(path)
         out.parent.mkdir(parents=True, exist_ok=True)
         rows = "\n".join(
-            "<tr><td>{ts}</td><td><code>{locator}</code></td>"
+            "<tr><td>{ts}</td><td>{source}</td><td><code>{locator}</code></td>"
             "<td><code>{healed}</code></td><td>{score:.2f}</td></tr>".format(
                 ts=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(event["ts"])),
+                source=event.get("source", "fingerprint"),
                 locator=event["locator"],
-                healed=event["healed_xpath"],
-                score=event["score"],
+                healed=event.get("healed_xpath", ""),
+                score=float(event.get("score") or 0.0),
             )
             for event in events
         )
@@ -429,7 +430,7 @@ class SelfHealingPlugin(LibraryComponent):
             "code{font-family:monospace;font-size:12px;white-space:pre-wrap}</style>"
             "<h1>Self-Healing Locator Report</h1>"
             f"<p>Healing events: <strong>{len(events)}</strong></p>"
-            "<table><thead><tr><th>timestamp</th><th>locator</th>"
+            "<table><thead><tr><th>timestamp</th><th>source</th><th>locator</th>"
             "<th>healed xpath</th><th>score</th></tr></thead>"
             f"<tbody>{rows}</tbody></table>"
         )
@@ -496,6 +497,7 @@ class SelfHealingPlugin(LibraryComponent):
                 "locator": locator,
                 "healed_xpath": new_xpath,
                 "score": healed["score"],
+                "source": "fingerprint",
             }
         )
         self.info(
@@ -575,6 +577,7 @@ class SelfHealingPlugin(LibraryComponent):
                 "ts": time.time(),
                 "locator": locator,
                 "healed_xpath": new_xpath,
+                "score": 0.0,
                 "llm_selector": f"{by}={val}",
                 "llm_model": self._llm_model,
                 "llm_usage": usage,

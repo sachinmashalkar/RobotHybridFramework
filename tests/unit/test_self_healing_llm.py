@@ -119,3 +119,61 @@ class TestBuildLlmMessages:
 class TestDefaults:
     def test_html_char_budget_is_generous_but_bounded(self) -> None:
         assert 1000 <= DEFAULT_LLM_MAX_HTML_CHARS <= 100_000
+
+
+class TestHealingReportAcceptsMixedEvents:
+    """Regression: the report generator must tolerate LLM events (no score)."""
+
+    def test_report_renders_llm_events_without_score(self, tmp_path) -> None:
+        import json as _json
+        import time as _time
+        from unittest.mock import MagicMock
+
+        from libraries.SelfHealingPlugin import SelfHealingPlugin
+
+        cache_path = tmp_path / "cache.json"
+        events_path = tmp_path / "events.jsonl"
+        events_path.write_text(
+            "\n".join(
+                [
+                    _json.dumps(
+                        {
+                            "ts": _time.time(),
+                            "locator": "css=.primary",
+                            "healed_xpath": "/html/body/button[1]",
+                            "score": 0.82,
+                            "source": "fingerprint",
+                        }
+                    ),
+                    _json.dumps(
+                        {
+                            "ts": _time.time(),
+                            "locator": "css=.missing",
+                            "healed_xpath": "/html/body/button[2]",
+                            "llm_selector": "css=button.secondary",
+                            "llm_model": "gpt-4o-mini",
+                            "llm_usage": {"total_tokens": 120},
+                            "source": "llm",
+                        }
+                    ),
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        plugin = SelfHealingPlugin.__new__(SelfHealingPlugin)
+        plugin._cache_path = cache_path
+        plugin._events_path = events_path
+        plugin._cache = {}
+        plugin.info = MagicMock()
+
+        report_path = tmp_path / "report.html"
+        plugin.write_healing_report(str(report_path))
+
+        html = report_path.read_text(encoding="utf-8")
+        assert "fingerprint" in html
+        assert "llm" in html
+        assert "css=.primary" in html
+        assert "css=.missing" in html
+        assert "0.82" in html
