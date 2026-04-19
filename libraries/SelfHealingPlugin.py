@@ -229,6 +229,21 @@ def build_llm_messages(
     ]
 
 
+def _extract_llm_content(payload: dict[str, Any]) -> str:
+    """Pull ``choices[0].message.content`` out of an OpenAI-compatible response.
+
+    Tolerates the three error shapes real providers return on failure:
+    ``{"choices": []}``, ``{"choices": null}``, ``{"choices": [null]}``.
+    """
+    choices = payload.get("choices") or []
+    if not choices:
+        return ""
+    first = choices[0] if isinstance(choices[0], dict) else {}
+    message = first.get("message") if isinstance(first.get("message"), dict) else {}
+    content = (message or {}).get("content") or ""
+    return content
+
+
 _GET_XPATH_JS = """
 const getXPath = (el) => {
   if (el && el.id) return \"//*[@id='\" + el.id + \"']\";
@@ -557,14 +572,16 @@ class SelfHealingPlugin(LibraryComponent):
             )
             return None
         by, val = parsed
+        kind = "xpath" if by == By.XPATH else "css"
+        canonical = f"{kind}={val}"
         try:
             elements = self.driver.find_elements(by, val)
         except WebDriverException as exc:
-            self.warn(f"[Heal] LLM selector '{val}' rejected by driver: {exc}")
+            self.warn(f"[Heal] LLM selector '{canonical}' rejected by driver: {exc}")
             return None
         if len(elements) != 1:
             self.warn(
-                f"[Heal] LLM selector '{val}' matched {len(elements)} elements; discarding"
+                f"[Heal] LLM selector '{canonical}' matched {len(elements)} elements; discarding"
             )
             return None
         element = elements[0]
@@ -578,14 +595,14 @@ class SelfHealingPlugin(LibraryComponent):
                 "locator": locator,
                 "healed_xpath": new_xpath,
                 "score": 0.0,
-                "llm_selector": f"{by}={val}",
+                "llm_selector": canonical,
                 "llm_model": self._llm_model,
                 "llm_usage": usage,
                 "source": "llm",
             }
         )
         self.info(
-            f"[Heal] LLM healed '{locator}' -> '{by}={val}' "
+            f"[Heal] LLM healed '{locator}' -> '{canonical}' "
             f"(model={self._llm_model}, usage={usage})"
         )
         self._update_fingerprint(locator, element)
@@ -612,13 +629,9 @@ class SelfHealingPlugin(LibraryComponent):
             timeout=self._llm_timeout_secs,
         )
         response.raise_for_status()
-        payload = response.json()
-        content = (
-            payload.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
-        )
-        usage = payload.get("usage", {}) or {}
+        payload = response.json() or {}
+        content = _extract_llm_content(payload)
+        usage = payload.get("usage") or {}
         return content, {
             "prompt_tokens": int(usage.get("prompt_tokens", 0)),
             "completion_tokens": int(usage.get("completion_tokens", 0)),

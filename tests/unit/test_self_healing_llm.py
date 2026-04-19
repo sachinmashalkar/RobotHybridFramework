@@ -9,6 +9,7 @@ from selenium.webdriver.common.by import By
 from libraries.SelfHealingPlugin import (
     DEFAULT_LLM_MAX_HTML_CHARS,
     Fingerprint,
+    _extract_llm_content,
     build_llm_messages,
     parse_llm_selector,
     prune_dom_html,
@@ -114,6 +115,35 @@ class TestBuildLlmMessages:
         user = messages[1]["content"]
         assert "css=button.primary" in user
         assert "fingerprint" in user.lower()
+
+
+class TestExtractLlmContent:
+    """The API can return malformed payloads — helper must never raise."""
+
+    def test_happy_path(self) -> None:
+        payload = {"choices": [{"message": {"content": "css=button.primary"}}]}
+        assert _extract_llm_content(payload) == "css=button.primary"
+
+    def test_missing_choices_key(self) -> None:
+        assert _extract_llm_content({}) == ""
+
+    def test_empty_choices_list(self) -> None:
+        assert _extract_llm_content({"choices": []}) == ""
+
+    def test_null_choices(self) -> None:
+        assert _extract_llm_content({"choices": None}) == ""
+
+    def test_null_first_choice(self) -> None:
+        assert _extract_llm_content({"choices": [None]}) == ""
+
+    def test_missing_message_key(self) -> None:
+        assert _extract_llm_content({"choices": [{}]}) == ""
+
+    def test_null_message(self) -> None:
+        assert _extract_llm_content({"choices": [{"message": None}]}) == ""
+
+    def test_null_content(self) -> None:
+        assert _extract_llm_content({"choices": [{"message": {"content": None}}]}) == ""
 
 
 class TestDefaults:
