@@ -44,6 +44,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from robot.utils import timestr_to_secs
+
 from SeleniumLibrary.base import LibraryComponent, keyword
 from SeleniumLibrary.errors import ElementNotFound
 from selenium.common.exceptions import (
@@ -265,7 +267,7 @@ class SelfHealingPlugin(LibraryComponent):
     @keyword
     def wait_until_element_is_visible(self, locator, timeout=None, error=None):  # noqa: ANN001
         """Heal-aware override of ``Wait Until Element Is Visible``."""
-        deadline = float(timeout) if timeout else self._timeout_secs()
+        deadline = timestr_to_secs(timeout) if timeout else self._timeout_secs()
         by_val = split_locator(locator)
         try:
             WebDriverWait(self.driver, deadline).until(
@@ -284,7 +286,7 @@ class SelfHealingPlugin(LibraryComponent):
     @keyword
     def wait_until_element_is_enabled(self, locator, timeout=None, error=None):  # noqa: ANN001
         """Heal-aware override of ``Wait Until Element Is Enabled``."""
-        deadline = float(timeout) if timeout else self._timeout_secs()
+        deadline = timestr_to_secs(timeout) if timeout else self._timeout_secs()
         by_val = split_locator(locator)
         try:
             WebDriverWait(self.driver, deadline).until(
@@ -364,7 +366,7 @@ class SelfHealingPlugin(LibraryComponent):
     def _timeout_secs(self) -> float:
         ctx_timeout = getattr(self.ctx, "timeout", 10.0)
         try:
-            return float(ctx_timeout)
+            return timestr_to_secs(ctx_timeout)
         except (TypeError, ValueError):
             return 10.0
 
