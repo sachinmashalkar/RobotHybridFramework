@@ -39,10 +39,16 @@ Two additional keywords are exposed for operators:
 from __future__ import annotations
 
 import json
+import os
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+import requests
+
+from robot.utils import timestr_to_secs
 
 from SeleniumLibrary.base import LibraryComponent, keyword
 from SeleniumLibrary.errors import ElementNotFound
@@ -74,6 +80,27 @@ TRACKED_ATTRS: tuple[str, ...] = (
 
 DEFAULT_CACHE = Path("results/healing/cache.json")
 DEFAULT_EVENTS = Path("results/healing/events.jsonl")
+
+DEFAULT_LLM_MODEL = "gpt-4o-mini"
+DEFAULT_LLM_BASE_URL = "https://api.openai.com/v1"
+DEFAULT_LLM_API_KEY_ENV = "OPENAI_API_KEY"
+DEFAULT_LLM_MAX_HTML_CHARS = 12000
+DEFAULT_LLM_TIMEOUT_SECS = 20.0
+
+_LLM_SYSTEM_PROMPT = (
+    "You are a Selenium locator expert. Given a pruned HTML fragment and a "
+    "description of the element that needs to be found, respond with exactly "
+    "one CSS selector or XPath that uniquely identifies that element. "
+    "Prefix the answer with 'css=' or 'xpath='. Do not include any other text, "
+    "markdown, or explanation."
+)
+
+_SELECTOR_RESPONSE = re.compile(r"(?P<kind>css|xpath)\s*=\s*(?P<val>.+)", re.I)
+_SCRIPT_STYLE_STRIP = re.compile(
+    r"<(script|style|noscript|svg|template)\b[^>]*>.*?</\1>",
+    re.I | re.S,
+)
+_HTML_COMMENT_STRIP = re.compile(r"<!--.*?-->", re.S)
 
 
 @dataclass
@@ -150,6 +177,73 @@ def split_locator(locator: str) -> tuple[str, str]:
     return By.CSS_SELECTOR, locator
 
 
+def prune_dom_html(html: str, max_chars: int = DEFAULT_LLM_MAX_HTML_CHARS) -> str:
+    """Trim ``html`` for LLM prompts — drop scripts/styles/comments, cap length."""
+    if not html:
+        return ""
+    cleaned = _SCRIPT_STYLE_STRIP.sub("", html)
+    cleaned = _HTML_COMMENT_STRIP.sub("", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if len(cleaned) > max_chars:
+        half = max_chars // 2
+        cleaned = cleaned[:half] + " <!-- …truncated… --> " + cleaned[-half:]
+    return cleaned
+
+
+def parse_llm_selector(response: str) -> tuple[str, str] | None:
+    """Parse an LLM response of form ``css=…`` / ``xpath=…`` into ``(By, value)``."""
+    if not response:
+        return None
+    text = response.strip().strip("`").splitlines()[0].strip()
+    match = _SELECTOR_RESPONSE.fullmatch(text)
+    if not match:
+        return None
+    value = match.group("val").strip()
+    if not value:
+        return None
+    return split_locator(f"{match.group('kind').lower()}={value}")
+
+
+def build_llm_messages(
+    locator: str,
+    fingerprint: Fingerprint | None,
+    dom_html: str,
+) -> list[dict[str, str]]:
+    """Assemble the chat payload sent to the LLM."""
+    fp_summary: dict[str, Any] = {}
+    if fingerprint is not None:
+        fp_summary = {
+            "tag": fingerprint.tag,
+            "text": fingerprint.text,
+            "attrs": fingerprint.attrs,
+            "previous_xpath": fingerprint.xpath,
+        }
+    user = (
+        f"Original locator that no longer resolves: {locator}\n"
+        f"Known fingerprint of the target element: {json.dumps(fp_summary, sort_keys=True)}\n"
+        f"Current pruned DOM:\n{dom_html}"
+    )
+    return [
+        {"role": "system", "content": _LLM_SYSTEM_PROMPT},
+        {"role": "user", "content": user},
+    ]
+
+
+def _extract_llm_content(payload: dict[str, Any]) -> str:
+    """Pull ``choices[0].message.content`` out of an OpenAI-compatible response.
+
+    Tolerates the three error shapes real providers return on failure:
+    ``{"choices": []}``, ``{"choices": null}``, ``{"choices": [null]}``.
+    """
+    choices = payload.get("choices") or []
+    if not choices:
+        return ""
+    first = choices[0] if isinstance(choices[0], dict) else {}
+    message = first.get("message") if isinstance(first.get("message"), dict) else {}
+    content = (message or {}).get("content") or ""
+    return content
+
+
 _GET_XPATH_JS = """
 const getXPath = (el) => {
   if (el && el.id) return \"//*[@id='\" + el.id + \"']\";
@@ -198,12 +292,22 @@ class SelfHealingPlugin(LibraryComponent):
         cache_path: str = str(DEFAULT_CACHE),
         events_path: str = str(DEFAULT_EVENTS),
         threshold: float = 0.6,
+        llm_model: str = DEFAULT_LLM_MODEL,
+        llm_base_url: str = DEFAULT_LLM_BASE_URL,
+        llm_api_key_env: str = DEFAULT_LLM_API_KEY_ENV,
+        llm_max_html_chars: int = DEFAULT_LLM_MAX_HTML_CHARS,
+        llm_timeout_secs: float = DEFAULT_LLM_TIMEOUT_SECS,
     ) -> None:
         LibraryComponent.__init__(self, ctx)
         self._cache_path = Path(cache_path)
         self._events_path = Path(events_path)
         self._threshold = float(threshold)
         self._cache: dict[str, dict[str, Any]] = self._load_cache()
+        self._llm_model = llm_model
+        self._llm_base_url = llm_base_url.rstrip("/")
+        self._llm_api_key_env = llm_api_key_env
+        self._llm_max_html_chars = int(llm_max_html_chars)
+        self._llm_timeout_secs = float(llm_timeout_secs)
 
     # ---------------- overridden SeleniumLibrary keywords ---------------
     @keyword
@@ -265,14 +369,14 @@ class SelfHealingPlugin(LibraryComponent):
     @keyword
     def wait_until_element_is_visible(self, locator, timeout=None, error=None):  # noqa: ANN001
         """Heal-aware override of ``Wait Until Element Is Visible``."""
-        deadline = float(timeout) if timeout else self._timeout_secs()
+        deadline = timestr_to_secs(timeout) if timeout else self._timeout_secs()
         by_val = split_locator(locator)
         try:
             WebDriverWait(self.driver, deadline).until(
                 EC.visibility_of_element_located(by_val)
             )
         except TimeoutException:
-            element = self._heal_from_cache(locator)
+            element = self._heal_fallback(locator)
             if element is None or not element.is_displayed():
                 raise AssertionError(
                     error or f"Element '{locator}' not visible in {deadline}s"
@@ -284,14 +388,14 @@ class SelfHealingPlugin(LibraryComponent):
     @keyword
     def wait_until_element_is_enabled(self, locator, timeout=None, error=None):  # noqa: ANN001
         """Heal-aware override of ``Wait Until Element Is Enabled``."""
-        deadline = float(timeout) if timeout else self._timeout_secs()
+        deadline = timestr_to_secs(timeout) if timeout else self._timeout_secs()
         by_val = split_locator(locator)
         try:
             WebDriverWait(self.driver, deadline).until(
                 EC.element_to_be_clickable(by_val)
             )
         except TimeoutException:
-            element = self._heal_from_cache(locator)
+            element = self._heal_fallback(locator)
             if element is None or not element.is_enabled():
                 raise AssertionError(
                     error or f"Element '{locator}' not enabled in {deadline}s"
@@ -319,12 +423,13 @@ class SelfHealingPlugin(LibraryComponent):
         out = Path(path)
         out.parent.mkdir(parents=True, exist_ok=True)
         rows = "\n".join(
-            "<tr><td>{ts}</td><td><code>{locator}</code></td>"
+            "<tr><td>{ts}</td><td>{source}</td><td><code>{locator}</code></td>"
             "<td><code>{healed}</code></td><td>{score:.2f}</td></tr>".format(
                 ts=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(event["ts"])),
+                source=event.get("source", "fingerprint"),
                 locator=event["locator"],
-                healed=event["healed_xpath"],
-                score=event["score"],
+                healed=event.get("healed_xpath", ""),
+                score=float(event.get("score") or 0.0),
             )
             for event in events
         )
@@ -340,7 +445,7 @@ class SelfHealingPlugin(LibraryComponent):
             "code{font-family:monospace;font-size:12px;white-space:pre-wrap}</style>"
             "<h1>Self-Healing Locator Report</h1>"
             f"<p>Healing events: <strong>{len(events)}</strong></p>"
-            "<table><thead><tr><th>timestamp</th><th>locator</th>"
+            "<table><thead><tr><th>timestamp</th><th>source</th><th>locator</th>"
             "<th>healed xpath</th><th>score</th></tr></thead>"
             f"<tbody>{rows}</tbody></table>"
         )
@@ -364,7 +469,7 @@ class SelfHealingPlugin(LibraryComponent):
     def _timeout_secs(self) -> float:
         ctx_timeout = getattr(self.ctx, "timeout", 10.0)
         try:
-            return float(ctx_timeout)
+            return timestr_to_secs(ctx_timeout)
         except (TypeError, ValueError):
             return 10.0
 
@@ -377,13 +482,21 @@ class SelfHealingPlugin(LibraryComponent):
                 return elements[0]
         except WebDriverException:
             pass
+        element = self._heal_fallback(locator)
+        if element is not None:
+            return element
+        raise ElementNotFound(
+            f"Element with locator '{locator}' not found "
+            f"(fingerprint scorer below threshold {self._threshold}; "
+            f"LLM heal unavailable or failed)"
+        )
+
+    def _heal_fallback(self, locator: str) -> WebElement | None:
+        """Try tier 2 (fingerprint) then tier 3 (LLM). Shared by all overrides."""
         element = self._heal_from_cache(locator)
-        if element is None:
-            raise ElementNotFound(
-                f"Element with locator '{locator}' not found "
-                f"(no healing candidate above threshold {self._threshold})"
-            )
-        return element
+        if element is not None:
+            return element
+        return self._heal_via_llm(locator)
 
     def _heal_from_cache(self, locator: str) -> WebElement | None:
         fp_dict = self._cache.get(locator)
@@ -403,6 +516,7 @@ class SelfHealingPlugin(LibraryComponent):
                 "locator": locator,
                 "healed_xpath": new_xpath,
                 "score": healed["score"],
+                "source": "fingerprint",
             }
         )
         self.info(
@@ -434,6 +548,99 @@ class SelfHealingPlugin(LibraryComponent):
         if best is None or best[0] < self._threshold:
             return None
         return {"element": best[1], "score": best[0]}
+
+    # ---------------- LLM heal tier ------------------------------------
+    def _heal_via_llm(self, locator: str) -> WebElement | None:
+        api_key = os.environ.get(self._llm_api_key_env)
+        if not api_key:
+            return None
+        fp_dict = self._cache.get(locator)
+        fp = Fingerprint.from_dict(fp_dict) if fp_dict else None
+        try:
+            raw_html = self.driver.execute_script(
+                "return document.body ? document.body.outerHTML : '';"
+            ) or ""
+        except WebDriverException:
+            raw_html = ""
+        dom = prune_dom_html(raw_html, self._llm_max_html_chars)
+        messages = build_llm_messages(locator, fp, dom)
+        try:
+            response, usage = self._call_llm(messages, api_key)
+        except requests.RequestException as exc:
+            self.warn(f"[Heal] LLM request failed for '{locator}': {exc}")
+            return None
+        parsed = parse_llm_selector(response)
+        if parsed is None:
+            self.warn(
+                f"[Heal] LLM response not a selector for '{locator}': {response!r}"
+            )
+            return None
+        by, val = parsed
+        kind = "xpath" if by == By.XPATH else "css"
+        canonical = f"{kind}={val}"
+        try:
+            elements = self.driver.find_elements(by, val)
+        except WebDriverException as exc:
+            self.warn(f"[Heal] LLM selector '{canonical}' rejected by driver: {exc}")
+            return None
+        if len(elements) != 1:
+            self.warn(
+                f"[Heal] LLM selector '{canonical}' matched {len(elements)} elements; discarding"
+            )
+            return None
+        element = elements[0]
+        try:
+            new_xpath = self.driver.execute_script(_ABS_XPATH_JS, element)
+        except WebDriverException:
+            new_xpath = ""
+        self._record_event(
+            {
+                "ts": time.time(),
+                "locator": locator,
+                "healed_xpath": new_xpath,
+                "score": 0.0,
+                "llm_selector": canonical,
+                "llm_model": self._llm_model,
+                "llm_usage": usage,
+                "source": "llm",
+            }
+        )
+        self.info(
+            f"[Heal] LLM healed '{locator}' -> '{canonical}' "
+            f"(model={self._llm_model}, usage={usage})"
+        )
+        self._update_fingerprint(locator, element)
+        return element
+
+    def _call_llm(
+        self,
+        messages: list[dict[str, str]],
+        api_key: str,
+    ) -> tuple[str, dict[str, int]]:
+        """POST to the chat-completions endpoint; return (content, usage)."""
+        response = requests.post(
+            f"{self._llm_base_url}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": self._llm_model,
+                "messages": messages,
+                "temperature": 0,
+                "max_tokens": 200,
+            },
+            timeout=self._llm_timeout_secs,
+        )
+        response.raise_for_status()
+        payload = response.json() or {}
+        content = _extract_llm_content(payload)
+        usage = payload.get("usage") or {}
+        return content, {
+            "prompt_tokens": int(usage.get("prompt_tokens", 0)),
+            "completion_tokens": int(usage.get("completion_tokens", 0)),
+            "total_tokens": int(usage.get("total_tokens", 0)),
+        }
 
     def _update_fingerprint(self, locator: str, element: WebElement) -> None:
         data = self._build_fingerprint(element)

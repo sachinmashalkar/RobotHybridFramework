@@ -15,8 +15,8 @@ Documentation       Demonstrates the self-healing SeleniumLibrary plugin.
 
 Resource            ../../resources/common/imports.resource
 
-Suite Setup         Begin Ui Test
-Suite Teardown      End Ui Test
+Test Setup          Begin Ui Test
+Test Teardown       End Ui Test
 
 Test Tags           ui    self-healing
 

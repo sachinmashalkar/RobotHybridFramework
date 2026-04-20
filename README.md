@@ -31,20 +31,34 @@ prefix:
 
 ### How it works
 
-1. On first successful resolution, the element's **fingerprint** — tag,
-   visible text, a curated attribute subset (`id`, `name`, `class`,
+Resolution walks three tiers in order. The first tier to return a matching
+element wins; later tiers only run when earlier ones fail.
+
+1. **Tier 1 — primary locator.** Plain SeleniumLibrary resolution via
+   `driver.find_elements()`. On success the element's **fingerprint** (tag,
+   visible text, a curated attribute subset — `id`, `name`, `class`,
    `placeholder`, `aria-label`, `href`, `type`, `role`, `data-testid`,
-   `title`, `alt`), and an absolute XPath — is cached under
+   `title`, `alt` — and an absolute XPath) is cached under
    `results/healing/cache.json`, keyed by the locator string itself.
-2. If that same locator later fails to resolve anything, every candidate on
-   the page sharing the cached tag is scored against the stored fingerprint
-   using a pure-Python similarity function (`score_fingerprints`). Weighting:
-   tag match 0.2, each exact tracked-attribute match 0.2, class Jaccard 0.15,
-   exact text 0.25, substring text 0.1; capped at 1.0.
-3. The highest-scoring candidate above the threshold (default `0.6`) is
-   returned. Each healing event is appended to
-   `results/healing/events.jsonl` and the cached XPath is refreshed so later
-   runs pick up the new location directly.
+2. **Tier 2 — fingerprint scorer.** If the locator resolves to nothing, every
+   candidate on the page sharing the cached tag is scored against the stored
+   fingerprint by a pure-Python similarity function (`score_fingerprints`).
+   Weighting: tag match 0.2, each exact tracked-attribute match 0.2, class
+   Jaccard 0.15, exact text 0.25, substring text 0.1; capped at 1.0. The
+   highest-scoring candidate above the threshold (default `0.6`) is returned.
+3. **Tier 3 — LLM-synthesised locator.** If the fingerprint scorer can't
+   decide (no cache entry, or best score below threshold), the plugin asks
+   an OpenAI-compatible chat model to synthesise a fresh locator from a
+   pruned copy of the current DOM plus the cached fingerprint. The response
+   must be `css=…` or `xpath=…` and must resolve to **exactly one** element
+   — otherwise it's discarded as untrusted. This tier is opt-in and stays
+   dormant unless `OPENAI_API_KEY` (configurable via `llm_api_key_env`) is
+   set in the environment.
+
+Every healing event is appended to `results/healing/events.jsonl` with its
+source (`fingerprint` or `llm`), score / token usage, and healed XPath, and
+the cached XPath is refreshed so later runs pick up the new location
+directly.
 
 ### Additional plugin keywords
 
@@ -78,19 +92,36 @@ the login still lands on `/secure`.
 ### Tuning
 
 Pass constructor arguments on the `plugins=` reference (comma-separated after
-the class name) to override the cache path, events path, or similarity
-threshold:
+the class name) to override the cache path, events path, similarity
+threshold, or any of the LLM knobs:
 
 ```robotframework
 Library    SeleniumLibrary    timeout=20s    implicit_wait=2s
 ...        plugins=libraries.SelfHealingPlugin.SelfHealingPlugin;results/shared/cache.json;results/shared/events.jsonl;0.55
 ```
 
+Positional args (in order): `cache_path`, `events_path`, `threshold`,
+`llm_model`, `llm_base_url`, `llm_api_key_env`, `llm_max_html_chars`,
+`llm_timeout_secs`. Defaults target OpenAI's `gpt-4o-mini` at
+`https://api.openai.com/v1`; point `llm_base_url` at an OpenAI-compatible
+endpoint (Azure OpenAI, OpenRouter, Ollama, vLLM, Groq, …) to swap providers
+without code changes.
+
+### Enabling the LLM tier
+
+Tier 3 runs only when the environment variable named by `llm_api_key_env`
+(default `OPENAI_API_KEY`) is populated. Export it in your shell or CI
+secrets and the plugin will route unresolved locators through the chat
+completions endpoint after the fingerprint scorer fails. Skip it and the
+plugin keeps working with tiers 1 and 2 only — no network calls are made.
+
 ### Unit tests
 
 Pure-Python tests for the scorer + locator parser live under
-`tests/unit/test_self_healing_scorer.py` and run via `pytest` — they don't
-require a browser and are executed as part of CI (`unit-tests` job).
+`tests/unit/test_self_healing_scorer.py`, and the LLM-tier helpers (DOM
+pruning, selector parsing, prompt assembly) are covered by
+`tests/unit/test_self_healing_llm.py`. Both run via `pytest`, do not require
+a browser, and are executed as part of CI (`unit-tests` job).
 
 ## Local commands
 
