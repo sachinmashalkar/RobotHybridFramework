@@ -34,3 +34,14 @@ browsers:
     name: edge
     options:
       - "--window-size=1920,1080"
+
+# Reference profile consumed by the `CdpConnect.Connect To CDP App` keyword
+# when attaching Selenium to a Chromium-based desktop app exposing CDP.
+# BrowserFactory does not launch this profile; call the keyword directly
+# and pass overrides as needed.
+cdp_app:
+  debugger_address: 127.0.0.1:9222
+  startup_timeout: 60
+  page_load_strategy: none
+  # target_url_contains: app://main
+  # chromedriver_path: C:\\Tools\\chromedriver-120\\chromedriver.exe

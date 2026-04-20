@@ -16,6 +16,7 @@ Library             JSONLibrary
 Library             DatabaseLibrary
 Library             libraries.ConfigManager    AS    Config
 Library             libraries.BrowserFactory    AS    Browser
+Library             libraries.CdpConnector    AS    CdpConnect
 Library             libraries.DataProvider    AS    Data
 Library             libraries.APIClient    AS    API
 Library             libraries.Utils    AS    Utils
