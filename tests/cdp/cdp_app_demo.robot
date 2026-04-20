@@ -17,6 +17,8 @@ Test Tags           desktop    cdp    manual
 ${APP_PATH}             ${EMPTY}    # e.g. C:\\Program Files\\MyApp\\MyApp.exe
 ${DEBUGGER_ADDRESS}     127.0.0.1:9222
 ${TARGET_HINT}          ${EMPTY}    # e.g. app://main or https://app.local
+${BROWSER_KIND}         chrome    # set to "edge" for Edge/WebView2 apps
+${DRIVER_PATH}          ${EMPTY}    # e.g. C:\\Tools\\msedgedriver-147\\msedgedriver.exe
 
 
 *** Test Cases ***
@@ -24,9 +26,13 @@ Attach To Running Chromium App
     [Documentation]    App is already running with --remote-debugging-port=9222.
     ...    If the loading splash never finishes, pass TARGET_HINT so the
     ...    connector waits for the real window BEFORE attaching chromedriver.
+    ...    For Microsoft Edge / WebView2 apps set BROWSER_KIND=edge and
+    ...    DRIVER_PATH to a matching msedgedriver.exe.
     [Tags]    attach
     CdpConnect.Connect To CDP App
     ...    debugger_address=${DEBUGGER_ADDRESS}
+    ...    browser=${BROWSER_KIND}
+    ...    chromedriver_path=${DRIVER_PATH}
     ...    wait_for_target_contains=${TARGET_HINT}
     ...    target_url_contains=${TARGET_HINT}
     Wait Until Keyword Succeeds    30x    1s    SeleniumLibrary.Get Location
@@ -39,6 +45,8 @@ Launch And Attach To Chromium App
     CdpConnect.Connect To CDP App
     ...    app_path=${APP_PATH}
     ...    debugger_address=${DEBUGGER_ADDRESS}
+    ...    browser=${BROWSER_KIND}
+    ...    chromedriver_path=${DRIVER_PATH}
     ...    startup_timeout=90
     ...    wait_for_target_contains=${TARGET_HINT}
     ...    target_url_contains=${TARGET_HINT}

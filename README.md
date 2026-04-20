@@ -200,7 +200,8 @@ Arguments (all optional unless noted):
 | `host` / `port` | `127.0.0.1` / `9222` | Used when `debugger_address` is omitted |
 | `startup_timeout` | `60` | Seconds to wait for `/json/version` to respond |
 | `page_load_strategy` | `none` | Override to `eager` or `normal` if your app has no splash |
-| `chromedriver_path` | _auto_ | Pin a chromedriver that matches the app's embedded Chromium |
+| `browser` | `chrome` | Set to `edge` for Microsoft Edge / WebView2 apps (any app whose `/json/version` `Browser` field starts with `Edg/`). Uses `msedgedriver` + `EdgeOptions` instead of chromedriver. |
+| `chromedriver_path` | _auto_ | Pin a chromedriver (or `msedgedriver` when `browser=edge`) matching the app's embedded Chromium/Edge version. **Version mismatch here is the #1 cause of a frozen loading screen.** |
 | `wait_for_target_contains` | _none_ | Poll `/json` for a `page` target matching this substring **before** attaching chromedriver. Use when the splash target would otherwise be attached to and freeze. |
 | `target_wait_timeout` | `60` | Seconds to wait for `wait_for_target_contains` |
 | `target_url_contains` | _none_ | After attach, switch to the first window handle whose URL matches |
@@ -231,6 +232,26 @@ If `chromedriver --version` is more than one major version away from
 the `Browser` field reported by `http://127.0.0.1:9222/json/version`,
 pin a matching binary via `chromedriver_path=` — a mismatch is the
 single most common cause of a frozen renderer during attach.
+
+**Microsoft Edge / WebView2 apps.** If `/json/version` reports
+something like `"Browser": "Edg/147.0.3912.60"` the app is Edge
+Chromium, not vanilla Chromium. Two supported options:
+
+1. Pass `browser=edge` and point `chromedriver_path=` at
+   `msedgedriver.exe` whose major version matches the `Edg/` number:
+   ```robotframework
+   CdpConnect.Connect To CDP App
+   ...    debugger_address=127.0.0.1:9222
+   ...    browser=edge
+   ...    chromedriver_path=C:\\Tools\\msedgedriver-147\\msedgedriver.exe
+   ```
+   Download from
+   <https://developer.microsoft.com/en-us/microsoft-edge/tools/webdriver/>.
+
+2. Stay on `browser=chrome` but use a `chromedriver` whose major
+   version matches the `Chrome/` number in the same `User-Agent`
+   string. Download from
+   <https://googlechromelabs.github.io/chrome-for-testing/>.
 
 Supporting keywords:
 

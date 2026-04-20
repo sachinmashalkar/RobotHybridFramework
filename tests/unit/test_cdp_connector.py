@@ -14,7 +14,7 @@ from typing import Any, Callable
 
 import pytest
 
-from libraries.CdpConnector import CdpConnector
+from libraries.CdpConnector import _BROWSER_ALIASES, CdpConnector
 
 
 def _free_port() -> int:
@@ -184,6 +184,22 @@ def test_wait_for_target_appears_after_delay() -> None:
         threading.Thread(target=add_main, daemon=True).start()
         matched = connector._wait_for_target("127.0.0.1", server.port, "main", timeout=5.0)
         assert matched["id"] == "m"
+
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("chrome", "chrome"),
+        ("Chrome", "chrome"),
+        ("chromium", "chrome"),
+        ("edge", "edge"),
+        ("Edge", "edge"),
+        ("MSEdge", "edge"),
+        ("WebView2", "edge"),
+    ],
+)
+def test_browser_aliases_normalise_to_supported_kind(name: str, expected: str) -> None:
+    assert _BROWSER_ALIASES[name.strip().lower()] == expected
 
 
 def test_stop_loading_on_all_handles_sends_page_stop_loading() -> None:

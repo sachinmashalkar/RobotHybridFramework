@@ -49,11 +49,21 @@ from robot.api.deco import keyword, library
 from robot.libraries.BuiltIn import BuiltIn
 from selenium.webdriver.chrome.options import Options as ChromeOptions
 from selenium.webdriver.chrome.service import Service as ChromeService
+from selenium.webdriver.edge.options import Options as EdgeOptions
+from selenium.webdriver.edge.service import Service as EdgeService
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 9222
 DEFAULT_STARTUP_TIMEOUT = 60.0
 DEFAULT_POLL_INTERVAL = 0.5
+
+_BROWSER_ALIASES: dict[str, str] = {
+    "chrome": "chrome",
+    "chromium": "chrome",
+    "edge": "edge",
+    "msedge": "edge",
+    "webview2": "edge",
+}
 
 
 @library(scope="GLOBAL", auto_keywords=False)
@@ -77,6 +87,7 @@ class CdpConnector:
         port: int = DEFAULT_PORT,
         startup_timeout: float = DEFAULT_STARTUP_TIMEOUT,
         page_load_strategy: str = "none",
+        browser: str = "chrome",
         chromedriver_path: str | None = None,
         wait_for_target_contains: str | None = None,
         target_wait_timeout: float = DEFAULT_STARTUP_TIMEOUT,
@@ -107,8 +118,20 @@ class CdpConnector:
           ``http://host:port/json/version`` to become reachable.
         - ``page_load_strategy``: ``none`` (default, recommended for
           splash-heavy apps), ``eager``, or ``normal``.
-        - ``chromedriver_path``: optional path to a ``chromedriver``
-          binary that matches the app's embedded Chromium version.
+        - ``browser``: ``chrome`` (default) or ``edge``. Use ``edge``
+          for Microsoft Edge / WebView2 based apps (anything whose
+          ``/json/version`` ``Browser`` field starts with ``Edg/``).
+          The keyword then creates a ``webdriver.Edge`` session with
+          ``EdgeOptions`` and expects ``msedgedriver`` on PATH (or the
+          explicit ``chromedriver_path`` — which is reused as the
+          msedgedriver path when ``browser=edge``).
+        - ``chromedriver_path``: optional path to a ``chromedriver`` (or
+          ``msedgedriver`` when ``browser=edge``) binary that matches
+          the app's embedded Chromium version. **A version mismatch
+          here is the single most common reason the app's renderer
+          freezes on the loading screen** — if the driver is even one
+          major version behind the runtime, the CDP attach handshake
+          can wedge the renderer until the script times out.
         - ``wait_for_target_contains``: optional URL substring; before
           attaching chromedriver, poll ``/json`` until a ``page`` target
           whose URL contains this substring exists. Use when the app
@@ -142,19 +165,38 @@ class CdpConnector:
                 host_part, port_part, wait_for_target_contains, float(target_wait_timeout)
             )
 
-        options = ChromeOptions()
+        kind = _BROWSER_ALIASES.get(str(browser).strip().lower())
+        if kind is None:
+            raise ValueError(
+                f"Unsupported browser {browser!r}. Use one of: "
+                f"{sorted(set(_BROWSER_ALIASES))}"
+            )
+
+        if kind == "edge":
+            options = EdgeOptions()
+            service: Any = (
+                EdgeService(executable_path=chromedriver_path)
+                if chromedriver_path
+                else EdgeService()
+            )
+            driver_name = "Edge"
+        else:
+            options = ChromeOptions()
+            service = (
+                ChromeService(executable_path=chromedriver_path)
+                if chromedriver_path
+                else ChromeService()
+            )
+            driver_name = "Chrome"
+
         options.add_experimental_option("debuggerAddress", addr)
         options.page_load_strategy = page_load_strategy
         for arg in extra_chrome_args or []:
             options.add_argument(arg)
 
-        service = (
-            ChromeService(executable_path=chromedriver_path) if chromedriver_path else ChromeService()
-        )
-
         selenium = BuiltIn().get_library_instance("SeleniumLibrary")
         browser_alias = selenium.create_webdriver(
-            "Chrome",
+            driver_name,
             alias=alias,
             options=options,
             service=service,
@@ -162,8 +204,8 @@ class CdpConnector:
         self._debugger_address = addr
         self._session_alias = browser_alias
         logger.info(
-            f"Attached SeleniumLibrary session '{browser_alias}' to CDP app at {addr} "
-            f"(pageLoadStrategy={page_load_strategy})"
+            f"Attached SeleniumLibrary session '{browser_alias}' to {driver_name} "
+            f"CDP app at {addr} (pageLoadStrategy={page_load_strategy})"
         )
 
         if post_attach_stop_loading:
