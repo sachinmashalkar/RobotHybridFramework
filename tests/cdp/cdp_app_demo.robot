@@ -16,15 +16,18 @@ Test Tags           desktop    cdp    manual
 *** Variables ***
 ${APP_PATH}             ${EMPTY}    # e.g. C:\\Program Files\\MyApp\\MyApp.exe
 ${DEBUGGER_ADDRESS}     127.0.0.1:9222
-${TARGET_HINT}          ${EMPTY}    # e.g. app://main
+${TARGET_HINT}          ${EMPTY}    # e.g. app://main or https://app.local
 
 
 *** Test Cases ***
 Attach To Running Chromium App
     [Documentation]    App is already running with --remote-debugging-port=9222.
+    ...    If the loading splash never finishes, pass TARGET_HINT so the
+    ...    connector waits for the real window BEFORE attaching chromedriver.
     [Tags]    attach
     CdpConnect.Connect To CDP App
     ...    debugger_address=${DEBUGGER_ADDRESS}
+    ...    wait_for_target_contains=${TARGET_HINT}
     ...    target_url_contains=${TARGET_HINT}
     Wait Until Keyword Succeeds    30x    1s    SeleniumLibrary.Get Location
 
@@ -37,5 +40,19 @@ Launch And Attach To Chromium App
     ...    app_path=${APP_PATH}
     ...    debugger_address=${DEBUGGER_ADDRESS}
     ...    startup_timeout=90
+    ...    wait_for_target_contains=${TARGET_HINT}
     ...    target_url_contains=${TARGET_HINT}
     Wait Until Keyword Succeeds    30x    1s    SeleniumLibrary.Get Location
+
+Diagnose Cdp Attach
+    [Documentation]    Non-attaching diagnostic: prints /json targets.
+    ...    Run this first when the loading screen never renders to see
+    ...    which targets the app is exposing.
+    [Tags]    diagnose
+    ${ready}=    CdpConnect.Cdp Is Ready    timeout=5
+    Should Be True    ${ready}    CDP endpoint not reachable at ${DEBUGGER_ADDRESS}
+    ${targets}=    CdpConnect.List Cdp Targets
+    Log    CDP targets: ${targets}    level=WARN
+    FOR    ${t}    IN    @{targets}
+        Log    ${t}    level=WARN
+    END

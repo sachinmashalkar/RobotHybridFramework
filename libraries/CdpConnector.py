@@ -78,7 +78,10 @@ class CdpConnector:
         startup_timeout: float = DEFAULT_STARTUP_TIMEOUT,
         page_load_strategy: str = "none",
         chromedriver_path: str | None = None,
+        wait_for_target_contains: str | None = None,
+        target_wait_timeout: float = DEFAULT_STARTUP_TIMEOUT,
         target_url_contains: str | None = None,
+        post_attach_stop_loading: bool = True,
         alias: str | None = None,
         extra_chrome_args: list[str] | None = None,
     ) -> str:
@@ -106,10 +109,23 @@ class CdpConnector:
           splash-heavy apps), ``eager``, or ``normal``.
         - ``chromedriver_path``: optional path to a ``chromedriver``
           binary that matches the app's embedded Chromium version.
+        - ``wait_for_target_contains``: optional URL substring; before
+          attaching chromedriver, poll ``/json`` until a ``page`` target
+          whose URL contains this substring exists. Use when the app
+          shows a splash/loader target first and chromedriver attaching
+          to it freezes the renderer. This delays attach until the real
+          window is live.
+        - ``target_wait_timeout``: seconds to wait for
+          ``wait_for_target_contains`` to succeed.
         - ``target_url_contains``: optional substring; after attach the
           library iterates all window handles and switches to the first
           whose URL contains this string. Useful when the app exposes a
           splash plus a main window.
+        - ``post_attach_stop_loading``: when true (default), the library
+          sends ``Page.stopLoading`` via CDP to every window handle
+          after attach. This unsticks Electron/CEF renderers that end
+          up in a "loading forever" state because chromedriver's attach
+          handshake interrupted their document parser.
         - ``alias``: SeleniumLibrary alias for the session.
         - ``extra_chrome_args``: extra ``options.add_argument`` values.
         """
@@ -120,6 +136,11 @@ class CdpConnector:
             self._launch_app(app_path, app_args, port_part)
 
         self._wait_for_cdp(host_part, port_part, float(startup_timeout))
+
+        if wait_for_target_contains:
+            self._wait_for_target(
+                host_part, port_part, wait_for_target_contains, float(target_wait_timeout)
+            )
 
         options = ChromeOptions()
         options.add_experimental_option("debuggerAddress", addr)
@@ -144,6 +165,9 @@ class CdpConnector:
             f"Attached SeleniumLibrary session '{browser_alias}' to CDP app at {addr} "
             f"(pageLoadStrategy={page_load_strategy})"
         )
+
+        if post_attach_stop_loading:
+            self._stop_loading_on_all_handles(selenium.driver)
 
         if target_url_contains:
             self._switch_to_target(selenium.driver, target_url_contains)
@@ -206,6 +230,34 @@ class CdpConnector:
             raise RuntimeError(f"Unexpected /json payload: {payload!r}")
         return payload
 
+    @keyword("Wait For Cdp Target")
+    def wait_for_cdp_target(
+        self,
+        url_contains: str,
+        host: str = DEFAULT_HOST,
+        port: int = DEFAULT_PORT,
+        timeout: float = DEFAULT_STARTUP_TIMEOUT,
+    ) -> dict[str, Any]:
+        """Poll ``/json`` until a ``page`` target's URL contains ``url_contains``.
+
+        Returns the matched target descriptor. Use this before
+        ``Connect To CDP App`` (or rely on its ``wait_for_target_contains``
+        argument) when the app shows a splash screen that chromedriver
+        must not attach to.
+        """
+        return self._wait_for_target(host, int(port), url_contains, float(timeout))
+
+    @keyword("Stop Loading On All Cdp Windows")
+    def stop_loading_on_all_cdp_windows(self) -> None:
+        """Send ``Page.stopLoading`` to every window handle on the CDP session.
+
+        Useful when an Electron/CEF renderer is wedged in a "loading
+        forever" state after attach. Has no effect on a fully loaded
+        page.
+        """
+        selenium = BuiltIn().get_library_instance("SeleniumLibrary")
+        self._stop_loading_on_all_handles(selenium.driver)
+
     def _launch_app(self, app_path: str, app_args: str, port: int) -> None:
         exe = Path(app_path)
         if not exe.exists():
@@ -229,6 +281,55 @@ class CdpConnector:
         # Intentionally do NOT pipe stdout/stderr: some Electron apps
         # deadlock waiting for a pipe reader that Robot never attaches.
         self._launched_process = subprocess.Popen(cmd, **kwargs)
+
+    @staticmethod
+    def _stop_loading_on_all_handles(driver: Any) -> None:
+        original = None
+        try:
+            original = driver.current_window_handle
+        except Exception:  # pragma: no cover - defensive
+            original = None
+        for handle in list(driver.window_handles):
+            try:
+                driver.switch_to.window(handle)
+                driver.execute_cdp_cmd("Page.stopLoading", {})
+                logger.info(f"Page.stopLoading sent to handle {handle}")
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.info(f"Page.stopLoading failed on handle {handle}: {exc}")
+        if original is not None:
+            try:
+                driver.switch_to.window(original)
+            except Exception:  # pragma: no cover - defensive
+                pass
+
+    def _wait_for_target(
+        self, host: str, port: int, url_contains: str, timeout: float
+    ) -> dict[str, Any]:
+        deadline = time.monotonic() + timeout
+        last_seen: list[dict[str, Any]] = []
+        while time.monotonic() < deadline:
+            try:
+                targets = self.list_cdp_targets(host=host, port=port, timeout=2.0)
+            except Exception as exc:
+                logger.info(f"/json fetch failed while waiting for target: {exc}")
+                time.sleep(DEFAULT_POLL_INTERVAL)
+                continue
+            last_seen = targets
+            for target in targets:
+                if target.get("type") != "page":
+                    continue
+                url = target.get("url", "")
+                if url_contains in url:
+                    logger.info(f"CDP target matched {url_contains!r}: {url}")
+                    return target
+            time.sleep(DEFAULT_POLL_INTERVAL)
+        summary = [
+            {"type": t.get("type"), "url": t.get("url")} for t in last_seen
+        ] or "<empty>"
+        raise RuntimeError(
+            f"No CDP page target whose URL contains {url_contains!r} appeared within "
+            f"{timeout}s. Last seen targets: {summary}"
+        )
 
     def _wait_for_cdp(self, host: str, port: int, timeout: float) -> None:
         url = self._version_url(host, port)

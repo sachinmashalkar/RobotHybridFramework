@@ -145,13 +145,22 @@ Chromium apps routinely:
 3. ship a Chromium version that does not match the system
    `chromedriver`, so the driver hangs during the handshake.
 
-`CdpConnect.Connect To CDP App` addresses all three:
+There is also a fourth, subtler failure mode specific to desktop
+Chromium runtimes: if `chromedriver` attaches **while the splash
+target is still the only `page` target**, the attach handshake can
+leave the splash renderer wedged in a "loading forever" state, so the
+main window never appears. Symptom: the window shows the loading
+animation, the DOM never renders, and the Robot script times out
+regardless of any `Wait Until ...` values.
+
+`CdpConnect.Connect To CDP App` addresses all four:
 
 | Cause | Knob |
 | ----- | ---- |
 | Splash `readyState` never reaches `complete` | `page_load_strategy=none` (default) |
 | Chromedriver attached to splash / DevTools target | `target_url_contains=<substring>` to switch to the real window post-attach |
 | Chromedriver / Chromium version mismatch | `chromedriver_path=<path to matching chromedriver>` |
+| Chromedriver attached too early — splash renderer never resumes | `wait_for_target_contains=<substring>` + `post_attach_stop_loading=True` (default) |
 
 ### Usage
 
@@ -192,9 +201,36 @@ Arguments (all optional unless noted):
 | `startup_timeout` | `60` | Seconds to wait for `/json/version` to respond |
 | `page_load_strategy` | `none` | Override to `eager` or `normal` if your app has no splash |
 | `chromedriver_path` | _auto_ | Pin a chromedriver that matches the app's embedded Chromium |
-| `target_url_contains` | _none_ | Switch to first window handle whose URL matches |
+| `wait_for_target_contains` | _none_ | Poll `/json` for a `page` target matching this substring **before** attaching chromedriver. Use when the splash target would otherwise be attached to and freeze. |
+| `target_wait_timeout` | `60` | Seconds to wait for `wait_for_target_contains` |
+| `target_url_contains` | _none_ | After attach, switch to the first window handle whose URL matches |
+| `post_attach_stop_loading` | `True` | Send `Page.stopLoading` via CDP to every window handle right after attach, which unsticks renderers left in a "loading forever" state by the attach handshake |
 | `alias` | _none_ | SeleniumLibrary session alias |
 | `extra_chrome_args` | `[]` | Additional `options.add_argument(...)` values |
+
+### Diagnosing a hung loading screen
+
+If the splash never renders the DOM, first confirm the app is
+actually exposing CDP and inspect its targets **without letting
+chromedriver attach**:
+
+```robotframework
+${ready}=    CdpConnect.Cdp Is Ready    host=127.0.0.1    port=9222
+Should Be True    ${ready}
+${targets}=    CdpConnect.List Cdp Targets
+Log    ${targets}    level=WARN
+```
+
+From `${targets}`, pick the `type=page` entry whose `url` matches
+the real window (not the splash or a `chrome-extension://` entry),
+then pass a distinctive substring as `wait_for_target_contains` *and*
+`target_url_contains`. You can also do this manually in a browser by
+opening `http://127.0.0.1:9222/json` on the same machine.
+
+If `chromedriver --version` is more than one major version away from
+the `Browser` field reported by `http://127.0.0.1:9222/json/version`,
+pin a matching binary via `chromedriver_path=` — a mismatch is the
+single most common cause of a frozen renderer during attach.
 
 Supporting keywords:
 
@@ -205,6 +241,13 @@ Supporting keywords:
   probe of the `/json/version` endpoint.
 * `CdpConnect.List Cdp Targets    host=... port=...` — returns the raw
   `/json` target list for debugging multi-window apps.
+* `CdpConnect.Wait For Cdp Target    url_contains=app://main    timeout=60` —
+  poll `/json` until a matching `page` target appears. Use this
+  standalone before `Connect To CDP App` if you want full manual
+  control of the wait.
+* `CdpConnect.Stop Loading On All Cdp Windows` — resend
+  `Page.stopLoading` to every window handle after attach if a
+  renderer is still wedged.
 
 ### Unit tests
 
