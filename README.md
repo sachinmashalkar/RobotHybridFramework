@@ -123,6 +123,96 @@ pruning, selector parsing, prompt assembly) are covered by
 `tests/unit/test_self_healing_llm.py`. Both run via `pytest`, do not require
 a browser, and are executed as part of CI (`unit-tests` job).
 
+## Connecting to a Chromium-based Desktop App (CDP)
+
+`libraries/CdpConnector.py` attaches a SeleniumLibrary session to a
+Chromium-based desktop app (Electron, CEF, Tauri/Chromium, any `.exe`
+that exposes `--remote-debugging-port=<port>`). It solves the common
+"the app launches but Robot hangs on the splash / loading screen until
+it times out" symptom.
+
+### Why the splash hangs
+
+The default Selenium `pageLoadStrategy` is `normal`, which blocks every
+subsequent command until `document.readyState == "complete"`. Desktop
+Chromium apps routinely:
+
+1. show a splash window that navigates away **before** the first
+   `load` event fires, so `readyState` never reaches `complete`;
+2. expose multiple CDP targets (splash, main window, DevTools, service
+   workers) and `chromedriver` attaches to whichever happens to be
+   first — often the one that is about to be destroyed;
+3. ship a Chromium version that does not match the system
+   `chromedriver`, so the driver hangs during the handshake.
+
+`CdpConnect.Connect To CDP App` addresses all three:
+
+| Cause | Knob |
+| ----- | ---- |
+| Splash `readyState` never reaches `complete` | `page_load_strategy=none` (default) |
+| Chromedriver attached to splash / DevTools target | `target_url_contains=<substring>` to switch to the real window post-attach |
+| Chromedriver / Chromium version mismatch | `chromedriver_path=<path to matching chromedriver>` |
+
+### Usage
+
+```robotframework
+*** Settings ***
+Resource    resources/common/imports.resource
+
+Suite Teardown    CdpConnect.Detach From CDP App    stop_app=False
+
+*** Test Cases ***
+Attach To Running Chromium App
+    # App is already running with --remote-debugging-port=9222
+    CdpConnect.Connect To CDP App
+    ...    debugger_address=127.0.0.1:9222
+    ...    target_url_contains=app://main
+    SeleniumLibrary.Get Location
+
+Launch And Attach
+    # Robot Framework owns the app lifecycle
+    CdpConnect.Connect To CDP App
+    ...    app_path=C:\\Program Files\\MyApp\\MyApp.exe
+    ...    app_args=--some-flag
+    ...    port=9222
+    ...    startup_timeout=90
+    ...    target_url_contains=app://main
+    ...    chromedriver_path=C:\\Tools\\chromedriver-120\\chromedriver.exe
+    SeleniumLibrary.Get Location
+```
+
+Arguments (all optional unless noted):
+
+| Arg | Default | Purpose |
+| --- | ------- | ------- |
+| `debugger_address` | built from `host:port` | `host:port` of the running Chromium DevTools endpoint |
+| `app_path` | _none_ | Executable to launch with `--remote-debugging-port=<port>` |
+| `app_args` | `""` | Extra CLI args for `app_path`; parsed with `shlex` |
+| `host` / `port` | `127.0.0.1` / `9222` | Used when `debugger_address` is omitted |
+| `startup_timeout` | `60` | Seconds to wait for `/json/version` to respond |
+| `page_load_strategy` | `none` | Override to `eager` or `normal` if your app has no splash |
+| `chromedriver_path` | _auto_ | Pin a chromedriver that matches the app's embedded Chromium |
+| `target_url_contains` | _none_ | Switch to first window handle whose URL matches |
+| `alias` | _none_ | SeleniumLibrary session alias |
+| `extra_chrome_args` | `[]` | Additional `options.add_argument(...)` values |
+
+Supporting keywords:
+
+* `CdpConnect.Detach From CDP App    stop_app=False` — closes the
+  Selenium session without killing the app. Pass `stop_app=True` to
+  also terminate an app started via `app_path`.
+* `CdpConnect.Cdp Is Ready    host=... port=... timeout=2.0` — boolean
+  probe of the `/json/version` endpoint.
+* `CdpConnect.List Cdp Targets    host=... port=...` — returns the raw
+  `/json` target list for debugging multi-window apps.
+
+### Unit tests
+
+Pure-Python helpers (address parsing, CDP polling, target switching,
+launch-command assembly) are covered by
+`tests/unit/test_cdp_connector.py` and run as part of the CI
+`unit-tests` job — no real Chromium required.
+
 ## Local commands
 
 ```bash
