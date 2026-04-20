@@ -65,6 +65,7 @@ class CdpConnector:
     def __init__(self) -> None:
         self._launched_process: subprocess.Popen[bytes] | None = None
         self._debugger_address: str | None = None
+        self._session_alias: str | None = None
 
     @keyword("Connect To CDP App")
     def connect_to_cdp_app(
@@ -138,6 +139,7 @@ class CdpConnector:
             service=service,
         )
         self._debugger_address = addr
+        self._session_alias = browser_alias
         logger.info(
             f"Attached SeleniumLibrary session '{browser_alias}' to CDP app at {addr} "
             f"(pageLoadStrategy={page_load_strategy})"
@@ -150,16 +152,22 @@ class CdpConnector:
 
     @keyword("Detach From CDP App")
     def detach_from_cdp_app(self, stop_app: bool = False) -> None:
-        """Close the Selenium session without killing the Chromium app.
+        """Close only the CDP Selenium session without killing the Chromium app.
 
-        Set ``stop_app=True`` to also terminate the executable if it was
+        Other SeleniumLibrary sessions (e.g. one opened via
+        ``Open Configured Browser``) are left untouched. Set
+        ``stop_app=True`` to also terminate the executable if it was
         started by ``Connect To CDP App`` via ``app_path``.
         """
         selenium = BuiltIn().get_library_instance("SeleniumLibrary")
-        try:
-            selenium.close_all_browsers()
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warn(f"Error closing SeleniumLibrary sessions: {exc}")
+        if self._session_alias is not None:
+            try:
+                selenium.switch_browser(self._session_alias)
+                selenium.close_browser()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warn(f"Error closing CDP Selenium session {self._session_alias!r}: {exc}")
+        else:
+            logger.info("Detach From CDP App called with no active CDP session; nothing to close.")
 
         if stop_app and self._launched_process is not None:
             try:
@@ -169,6 +177,7 @@ class CdpConnector:
             self._launched_process = None
 
         self._debugger_address = None
+        self._session_alias = None
 
     @keyword("Cdp Is Ready")
     def cdp_is_ready(
